@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: "jsdom",
+    execArgv: ["--no-experimental-webstorage"],
     globals: true,
     setupFiles: "./src/test/setup.ts",
   },

@@ -48,4 +48,21 @@ describe("notifications", () => {
     });
     expect(result[0].notificationSentAt).toBe(now.toISOString());
   });
+
+  it("does not repeat notifications for tasks that were already stamped", () => {
+    const notificationFactory = vi.fn();
+    const task = {
+      ...createTask({ title: "已经提醒过", source: "企微群", dueAt: "2026-05-15T08:59" }, now),
+      notificationSentAt: now.toISOString(),
+    };
+
+    const result = notifyDueTasks([task], {
+      now,
+      permission: "granted",
+      createNotification: notificationFactory,
+    });
+
+    expect(notificationFactory).not.toHaveBeenCalled();
+    expect(result).toEqual([task]);
+  });
 });

@@ -37,6 +37,7 @@ import { exportTasks, importTasks, loadTasks, saveTasks } from "./services/stora
 
 type SelectableStatus = "全部" | TaskStatus;
 type SelectablePriority = "全部" | TaskPriority;
+type NotificationRequestState = "idle" | "requesting" | "granted" | "denied" | "default" | "unsupported" | "error";
 
 interface TaskDraft {
   title: string;
@@ -68,6 +69,8 @@ export default function App() {
   const [filters, setFilters] = useState<Filters>({ query: "", status: "全部", priority: "全部" });
   const [clock, setClock] = useState(() => new Date());
   const [permission, setPermission] = useState<NotificationPermission>(() => getNotificationPermission());
+  const [notificationRequestState, setNotificationRequestState] = useState<NotificationRequestState>("idle");
+  const [showNotificationHelp, setShowNotificationHelp] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<TaskDraft | null>(null);
   const [importMessage, setImportMessage] = useState("");
@@ -126,6 +129,9 @@ export default function App() {
   const attentionCount = useMemo(() => getAttentionCount(tasks, clock), [tasks, clock]);
   const activeCount = tasks.filter((task) => task.status !== "已完成").length;
   const completedCount = tasks.length - activeCount;
+  const notificationNotice = getNotificationNotice(notificationRequestState, permission);
+  const notificationButtonLabel = getNotificationButtonLabel(notificationRequestState, permission);
+  const notificationSettingsUrl = getNotificationSettingsUrl(window.location.origin, navigator.userAgent);
 
   function handleCreateTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -192,8 +198,31 @@ export default function App() {
   }
 
   async function requestPermission() {
-    const nextPermission = await requestNotificationPermission();
-    setPermission(nextPermission);
+    if (!("Notification" in window)) {
+      setPermission("denied");
+      setNotificationRequestState("unsupported");
+      return;
+    }
+
+    setNotificationRequestState("requesting");
+
+    try {
+      const nextPermission = await requestNotificationPermission();
+      setPermission(nextPermission);
+
+      if (nextPermission === "granted") {
+        setNotificationRequestState("granted");
+        new Notification("企业微信待办通知已开启", {
+          body: "到期事项会在网页打开时提醒。",
+        });
+        return;
+      }
+
+      setNotificationRequestState(nextPermission === "denied" ? "denied" : "default");
+    } catch {
+      setPermission(getNotificationPermission());
+      setNotificationRequestState("error");
+    }
   }
 
   function downloadBackup() {
@@ -229,9 +258,14 @@ export default function App() {
           <h1>待办工作台</h1>
         </div>
         <div className="topbar-actions">
-          <button className="secondary-button" type="button" onClick={requestPermission}>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={notificationRequestState === "requesting"}
+            onClick={requestPermission}
+          >
             <Bell size={16} />
-            {permission === "granted" ? "通知已开启" : "开启通知"}
+            {notificationButtonLabel}
           </button>
           <button className="icon-button" type="button" aria-label="导出备份" onClick={downloadBackup}>
             <Download size={17} />
@@ -355,11 +389,14 @@ export default function App() {
             </label>
           </div>
 
-          <p className="notice">
-            {permission === "granted"
-              ? "网页打开时会触发到期通知；关闭期间错过的任务会在下次打开后显示为逾期。"
-              : "通知未开启时，网站仍会在页面内标出到期和逾期任务。"}
+          <p className="notice" aria-live="polite">
+            {notificationNotice}
           </p>
+          {notificationRequestState === "denied" ? (
+            <button className="link-button" type="button" onClick={() => setShowNotificationHelp(true)}>
+              查看开启方法
+            </button>
+          ) : null}
           {importMessage ? <p className="import-message">{importMessage}</p> : null}
         </section>
 
@@ -426,6 +463,42 @@ export default function App() {
           />
         </section>
       </main>
+
+      {showNotificationHelp ? (
+        <div className="modal-backdrop">
+          <section
+            className="help-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="notification-help-title"
+          >
+            <div className="dialog-heading">
+              <div>
+                <p className="eyebrow">浏览器权限</p>
+                <h2 id="notification-help-title">开启浏览器通知</h2>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="关闭开启方法"
+                onClick={() => setShowNotificationHelp(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p className="dialog-intro">浏览器已拒绝当前站点通知。请将本站通知权限改为允许后重试。</p>
+            <ol className="help-steps">
+              <li>点击地址栏左侧的站点信息图标。</li>
+              <li>找到通知权限，并改为允许。</li>
+              <li>回到本页后，再次点击开启通知。</li>
+            </ol>
+            <a className="secondary-button settings-link" href={notificationSettingsUrl} target="_blank" rel="noreferrer">
+              打开浏览器通知设置
+            </a>
+            <p className="settings-url">{notificationSettingsUrl}</p>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -598,6 +671,40 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: "blu
       <strong>{value}</strong>
     </div>
   );
+}
+
+function getNotificationButtonLabel(state: NotificationRequestState, permission: NotificationPermission): string {
+  if (state === "requesting") return "请求中...";
+  if (permission === "granted" || state === "granted") return "通知已开启";
+  if (state === "denied") return "通知已拒绝";
+  return "开启通知";
+}
+
+function getNotificationNotice(state: NotificationRequestState, permission: NotificationPermission): string {
+  if (state === "requesting") return "正在请求浏览器通知权限，请在弹窗中选择允许。";
+  if (state === "granted") return "通知已开启，并已发送测试通知。网页打开时会提醒到期事项。";
+  if (state === "denied") return "通知权限已被浏览器拒绝，请在浏览器地址栏或设置中允许通知后重试。";
+  if (state === "default") return "未完成授权。关闭权限弹窗后不会发送系统通知，可再次点击开启。";
+  if (state === "unsupported") return "当前浏览器不支持系统通知，网站仍会在页面内标出到期和逾期任务。";
+  if (state === "error") return "通知权限请求失败，网站仍会在页面内标出到期和逾期任务。";
+
+  return permission === "granted"
+    ? "网页打开时会触发到期通知；关闭期间错过的任务会在下次打开后显示为逾期。"
+    : "通知未开启时，网站仍会在页面内标出到期和逾期任务。";
+}
+
+function getNotificationSettingsUrl(origin: string, userAgent: string): string {
+  const encodedOrigin = encodeURIComponent(origin);
+
+  if (/Edg\//.test(userAgent)) {
+    return `edge://settings/content/siteDetails?site=${encodedOrigin}`;
+  }
+
+  if (/Firefox\//.test(userAgent)) {
+    return "about:preferences#privacy";
+  }
+
+  return `chrome://settings/content/siteDetails?site=${encodedOrigin}`;
 }
 
 function toDateTimeLocal(date: Date): string {
