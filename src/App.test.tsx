@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import App from "./App";
 import { createTask } from "./domain/tasks";
 import { exportTasks, STORAGE_KEY } from "./services/storage";
 
 const originalNotificationDescriptor = Object.getOwnPropertyDescriptor(window, "Notification");
+const originalSecureContextDescriptor = Object.getOwnPropertyDescriptor(window, "isSecureContext");
 
 function restoreNotification(): void {
   if (originalNotificationDescriptor) {
@@ -15,6 +16,22 @@ function restoreNotification(): void {
 
   Reflect.deleteProperty(window, "Notification");
   Reflect.deleteProperty(globalThis, "Notification");
+}
+
+function restoreSecureContext(): void {
+  if (originalSecureContextDescriptor) {
+    Object.defineProperty(window, "isSecureContext", originalSecureContextDescriptor);
+    return;
+  }
+
+  Reflect.deleteProperty(window, "isSecureContext");
+}
+
+function mockSecureContext(isSecureContext: boolean): void {
+  Object.defineProperty(window, "isSecureContext", {
+    configurable: true,
+    value: isSecureContext,
+  });
 }
 
 function removeNotificationSupport(): void {
@@ -51,12 +68,14 @@ function mockNotification(
 describe("App", () => {
   beforeEach(() => {
     localStorage.clear();
+    mockSecureContext(true);
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-15T09:00:00+08:00"));
   });
 
   afterEach(() => {
     restoreNotification();
+    restoreSecureContext();
     vi.useRealTimers();
   });
 
@@ -174,6 +193,73 @@ describe("App", () => {
     expect(notification.createNotification).toHaveBeenCalledWith("企业微信待办通知已开启", {
       body: "到期事项会在网页打开时提醒。",
     });
+    expect(screen.getByText("通知效果：到期待办会弹出系统通知；如果没有看到气泡，请打开 Windows 通知中心查看。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "发送测试通知" })).toBeInTheDocument();
+  });
+
+  it("sends another test notification after notification permission is granted", async () => {
+    vi.useRealTimers();
+    const notification = mockNotification("granted", Promise.resolve("granted"));
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "发送测试通知" }));
+
+    expect(notification.createNotification).toHaveBeenCalledWith("企业微信待办测试通知", {
+      body: "如果你看到了这条系统通知，说明浏览器通知已经可以正常弹出。",
+    });
+    expect(screen.getByText("已再次发送测试通知。若没有弹窗，请查看 Windows 通知中心或系统通知设置。")).toBeInTheDocument();
+  });
+
+  it("schedules a due notification at the task deadline instead of waiting for polling", async () => {
+    vi.setSystemTime(new Date("2026-05-15T09:00:17+08:00"));
+    const notification = mockNotification("granted", Promise.resolve("granted"));
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("待办标题"), { target: { value: "准点提醒客户" } });
+    fireEvent.change(screen.getByLabelText("来源人/群"), { target: { value: "客户群" } });
+    fireEvent.change(screen.getByLabelText("截止时间"), { target: { value: "2026-05-15T09:01" } });
+    fireEvent.click(screen.getByRole("button", { name: "新增待办" }));
+
+    await act(async () => {
+      vi.advanceTimersByTime(42_000);
+    });
+    expect(notification.createNotification).not.toHaveBeenCalledWith(
+      "企业微信待办到期",
+      expect.objectContaining({ body: "准点提醒客户 · 来源：客户群" }),
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    expect(notification.createNotification).toHaveBeenCalledWith(
+      "企业微信待办到期",
+      expect.objectContaining({ body: "准点提醒客户 · 来源：客户群" }),
+    );
+  });
+
+  it("reschedules a due notification when the task deadline is edited", async () => {
+    vi.setSystemTime(new Date("2026-05-15T09:00:17+08:00"));
+    const notification = mockNotification("granted", Promise.resolve("granted"));
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("待办标题"), { target: { value: "改期提醒客户" } });
+    fireEvent.change(screen.getByLabelText("来源人/群"), { target: { value: "客户群" } });
+    fireEvent.change(screen.getByLabelText("截止时间"), { target: { value: "2026-05-15T09:10" } });
+    fireEvent.click(screen.getByRole("button", { name: "新增待办" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑 改期提醒客户" }));
+    fireEvent.change(screen.getAllByLabelText("截止时间")[1], { target: { value: "2026-05-15T09:01" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await act(async () => {
+      vi.advanceTimersByTime(43_000);
+    });
+
+    expect(notification.createNotification).toHaveBeenCalledWith(
+      "企业微信待办到期",
+      expect.objectContaining({ body: "改期提醒客户 · 来源：客户群" }),
+    );
   });
 
   it("shows browser settings guidance when notification permission is denied", async () => {
@@ -187,8 +273,41 @@ describe("App", () => {
     expect(screen.getByText("通知权限已被浏览器拒绝，请在浏览器地址栏或设置中允许通知后重试。")).toBeInTheDocument();
   });
 
+  it("diagnoses blocked notification permissions before requesting browser permission", async () => {
+    vi.useRealTimers();
+    mockSecureContext(false);
+    const notification = mockNotification("default", Promise.resolve("granted"));
+    render(<App />);
+
+    expect(
+      screen.getByText("当前地址不是浏览器认可的安全地址，通知权限会被锁成屏蔽。请改用 http://localhost:5173/ 或 HTTPS 后再开启。"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "开启通知" }));
+
+    expect(notification.requestPermission).not.toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: "通知不可用" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看原因和修复方法" }));
+
+    const dialog = screen.getByRole("dialog", { name: "开启浏览器通知" });
+    expect(within(dialog).getByText("当前检测结果")).toBeInTheDocument();
+    expect(within(dialog).getByText(`当前地址：${window.location.origin}`)).toBeInTheDocument();
+    expect(within(dialog).getByText("安全上下文：否")).toBeInTheDocument();
+    expect(within(dialog).getByText("浏览器通知接口：支持")).toBeInTheDocument();
+    expect(within(dialog).getByText("权限状态：default")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("如果已经是 localhost 但通知仍是灰色，检查浏览器的全局通知开关，以及 Windows 设置里的系统通知开关。"),
+    ).toBeInTheDocument();
+  });
+
   it("opens browser notification setting guidance after permission is denied", async () => {
     vi.useRealTimers();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
     mockNotification("default", Promise.resolve("denied"));
     render(<App />);
 
@@ -196,16 +315,49 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole("button", { name: "查看开启方法" }));
 
     const dialog = screen.getByRole("dialog", { name: "开启浏览器通知" });
-    const settingsLink = within(dialog).getByRole("link", { name: "打开浏览器通知设置" });
-    expect(settingsLink).toHaveAttribute(
-      "href",
-      `chrome://settings/content/siteDetails?site=${encodeURIComponent(window.location.origin)}`,
-    );
-    expect(within(dialog).getByText("回到本页后，再次点击开启通知。")).toBeInTheDocument();
+    const settingsUrl = `chrome://settings/content/siteDetails?site=${encodeURIComponent(window.location.origin)}`;
+    expect(within(dialog).queryByRole("link", { name: "打开浏览器通知设置" })).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByText("浏览器不允许网页直接打开这类内部设置页，请复制下面地址到地址栏打开。"),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("如果当前地址是 192.168.x.x 这类局域网地址，Chrome 可能会把通知权限锁成屏蔽。请改用终端里显示的 Local 地址，例如 http://localhost:5173/。"),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("设置页地址（不是网页链接，请复制后粘贴到地址栏）：")).toBeInTheDocument();
+    expect(within(dialog).getByText(settingsUrl)).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "复制设置地址" }));
+
+    expect(writeText).toHaveBeenCalledWith(settingsUrl);
+    expect(await within(dialog).findByText("已复制设置地址，请粘贴到浏览器地址栏打开。")).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "关闭开启方法" }));
 
     expect(screen.queryByRole("dialog", { name: "开启浏览器通知" })).not.toBeInTheDocument();
+  });
+
+  it("copies the notification settings address with a document fallback", async () => {
+    vi.useRealTimers();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+    mockNotification("default", Promise.resolve("denied"));
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "开启通知" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看开启方法" }));
+
+    const dialog = screen.getByRole("dialog", { name: "开启浏览器通知" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "复制设置地址" }));
+
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(await within(dialog).findByText("已复制设置地址，请粘贴到浏览器地址栏打开。")).toBeInTheDocument();
   });
 
   it("shows retry guidance when notification permission is dismissed", async () => {

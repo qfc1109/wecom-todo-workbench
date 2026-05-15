@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTask, updateTaskStatus } from "../domain/tasks";
-import { collectDueTasks, notifyDueTasks } from "./notifications";
+import { collectDueTasks, getNextNotificationDelay, notifyDueTasks } from "./notifications";
 
 const now = new Date("2026-05-15T09:00:00+08:00");
 
@@ -64,5 +64,34 @@ describe("notifications", () => {
 
     expect(notificationFactory).not.toHaveBeenCalled();
     expect(result).toEqual([task]);
+  });
+
+  it("returns the delay to the nearest pending notification", () => {
+    const near = createTask({ title: "一分钟后", source: "企微", dueAt: "2026-05-15T09:01" }, now);
+    const later = createTask({ title: "十分钟后", source: "企微", dueAt: "2026-05-15T09:10" }, now);
+    const done = updateTaskStatus(
+      createTask({ title: "已完成", source: "企微", dueAt: "2026-05-15T09:00" }, now),
+      "已完成",
+      now,
+    );
+    const notified = { ...later, id: "notified", notificationSentAt: now.toISOString() };
+
+    expect(getNextNotificationDelay([later, done, notified, near], now)).toBe(60_000);
+  });
+
+  it("returns zero delay when a pending task is already due", () => {
+    const due = createTask({ title: "已经到期", source: "企微", dueAt: "2026-05-15T08:59" }, now);
+
+    expect(getNextNotificationDelay([due], now)).toBe(0);
+  });
+
+  it("returns null when there are no pending notifications to schedule", () => {
+    const done = updateTaskStatus(
+      createTask({ title: "已完成", source: "企微", dueAt: "2026-05-15T09:01" }, now),
+      "已完成",
+      now,
+    );
+
+    expect(getNextNotificationDelay([done], now)).toBeNull();
   });
 });

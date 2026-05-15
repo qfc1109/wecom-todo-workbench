@@ -308,6 +308,27 @@ textarea:focus {
   line-height: 1.5;
 }
 
+.notification-status-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  background: #f0fdf4;
+  padding: 10px;
+}
+
+.notification-status-panel p {
+  margin: 0;
+  color: #166534;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.compact-button {
+  width: fit-content;
+}
+
 .import-message {
   color: #0f766e;
   font-weight: 700;
@@ -357,6 +378,37 @@ textarea:focus {
   line-height: 1.55;
 }
 
+.diagnostic-box {
+  margin-bottom: 12px;
+  border: 1px solid #d6dee8;
+  border-radius: 6px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.diagnostic-box h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.diagnostic-box p {
+  margin: 4px 0 0;
+  color: #46525e;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.origin-warning {
+  margin: 0 0 12px;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  background: #fff7ed;
+  color: #9a3412;
+  padding: 10px;
+  line-height: 1.55;
+}
+
 .help-steps {
   margin: 0 0 16px;
   padding-left: 20px;
@@ -368,7 +420,23 @@ textarea:focus {
   width: 100%;
 }
 
+.settings-hint,
+.settings-copy-feedback,
+.settings-url-label {
+  margin: 10px 0 0;
+  color: #4d5a66;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.settings-copy-feedback {
+  min-height: 20px;
+  color: #0f766e;
+  font-weight: 700;
+}
+
 .settings-url {
+  display: block;
   margin: 10px 0 0;
   border: 1px solid #d6dee8;
   border-radius: 6px;

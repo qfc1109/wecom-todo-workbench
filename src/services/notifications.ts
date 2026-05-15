@@ -40,6 +40,24 @@ export function notifyDueTasks(tasks: Task[], deps: NotificationDeps): Task[] {
   );
 }
 
+export function getNextNotificationDelay(tasks: Task[], now = new Date()): number | null {
+  const nowTime = now.getTime();
+  const nextDueTime = tasks.reduce<number | null>((nearest, task) => {
+    if (task.status === "已完成" || task.notificationSentAt !== null) {
+      return nearest;
+    }
+
+    const dueTime = parseDueAt(task.dueAt).getTime();
+    if (Number.isNaN(dueTime)) {
+      return nearest;
+    }
+
+    return nearest === null ? dueTime : Math.min(nearest, dueTime);
+  }, null);
+
+  return nextDueTime === null ? null : Math.max(0, nextDueTime - nowTime);
+}
+
 export function getNotificationPermission(): NotificationPermission {
   if (!("Notification" in window)) {
     return "denied";

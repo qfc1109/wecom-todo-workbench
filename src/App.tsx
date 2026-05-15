@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   Bell,
   Check,
+  Copy,
   Download,
   Edit3,
   Filter,
@@ -29,6 +30,7 @@ import {
 } from "./domain/tasks";
 import {
   getAttentionCount,
+  getNextNotificationDelay,
   getNotificationPermission,
   notifyDueTasks,
   requestNotificationPermission,
@@ -37,7 +39,23 @@ import { exportTasks, importTasks, loadTasks, saveTasks } from "./services/stora
 
 type SelectableStatus = "全部" | TaskStatus;
 type SelectablePriority = "全部" | TaskPriority;
-type NotificationRequestState = "idle" | "requesting" | "granted" | "denied" | "default" | "unsupported" | "error";
+type NotificationRequestState =
+  | "idle"
+  | "requesting"
+  | "granted"
+  | "denied"
+  | "default"
+  | "blocked"
+  | "unsupported"
+  | "error";
+type SettingsCopyState = "idle" | "copied" | "error";
+
+interface NotificationEnvironment {
+  origin: string;
+  isSecureContext: boolean;
+  notificationSupported: boolean;
+  permission: NotificationPermission;
+}
 
 interface TaskDraft {
   title: string;
@@ -62,6 +80,8 @@ const emptyDraft = (): TaskDraft => ({
   status: "待处理",
   notes: "",
 });
+const NOTIFICATION_FALLBACK_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_NOTIFICATION_TIMEOUT_MS = 2_147_483_647;
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>(() => loadTasks());
@@ -71,6 +91,8 @@ export default function App() {
   const [permission, setPermission] = useState<NotificationPermission>(() => getNotificationPermission());
   const [notificationRequestState, setNotificationRequestState] = useState<NotificationRequestState>("idle");
   const [showNotificationHelp, setShowNotificationHelp] = useState(false);
+  const [settingsCopyState, setSettingsCopyState] = useState<SettingsCopyState>("idle");
+  const [testNotificationMessage, setTestNotificationMessage] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<TaskDraft | null>(null);
   const [importMessage, setImportMessage] = useState("");
@@ -87,6 +109,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let nextNotificationTimer: number | null = null;
+
     const runNotifications = () => {
       const currentPermission = getNotificationPermission();
       setPermission(currentPermission);
@@ -104,10 +128,44 @@ export default function App() {
       );
     };
 
+    const scheduleNextNotification = () => {
+      const currentPermission = getNotificationPermission();
+      setPermission(currentPermission);
+
+      if (currentPermission !== "granted" || !("Notification" in window)) {
+        return;
+      }
+
+      const delay = getNextNotificationDelay(tasks, new Date());
+      if (delay === null || delay === 0) {
+        return;
+      }
+
+      nextNotificationTimer = window.setTimeout(runNotifications, Math.min(delay, MAX_NOTIFICATION_TIMEOUT_MS));
+    };
+
+    const runNotificationsWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        runNotifications();
+      }
+    };
+
     runNotifications();
-    const interval = window.setInterval(runNotifications, 30_000);
-    return () => window.clearInterval(interval);
-  }, []);
+    scheduleNextNotification();
+
+    const fallbackInterval = window.setInterval(runNotifications, NOTIFICATION_FALLBACK_INTERVAL_MS);
+    document.addEventListener("visibilitychange", runNotificationsWhenVisible);
+    window.addEventListener("focus", runNotifications);
+
+    return () => {
+      if (nextNotificationTimer !== null) {
+        window.clearTimeout(nextNotificationTimer);
+      }
+      window.clearInterval(fallbackInterval);
+      document.removeEventListener("visibilitychange", runNotificationsWhenVisible);
+      window.removeEventListener("focus", runNotifications);
+    };
+  }, [tasks, permission]);
 
   const visibleTasks = useMemo(() => {
     const keyword = filters.query.trim().toLocaleLowerCase("zh-CN");
@@ -129,9 +187,14 @@ export default function App() {
   const attentionCount = useMemo(() => getAttentionCount(tasks, clock), [tasks, clock]);
   const activeCount = tasks.filter((task) => task.status !== "已完成").length;
   const completedCount = tasks.length - activeCount;
-  const notificationNotice = getNotificationNotice(notificationRequestState, permission);
+  const notificationEnvironment = getNotificationEnvironment(permission);
+  const notificationNotice = getNotificationNotice(notificationRequestState, permission, notificationEnvironment);
   const notificationButtonLabel = getNotificationButtonLabel(notificationRequestState, permission);
   const notificationSettingsUrl = getNotificationSettingsUrl(window.location.origin, navigator.userAgent);
+  const shouldShowNotificationHelp =
+    notificationRequestState === "denied" ||
+    notificationRequestState === "blocked" ||
+    isNotificationBlockedByBrowser(notificationEnvironment);
 
   function handleCreateTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -198,6 +261,11 @@ export default function App() {
   }
 
   async function requestPermission() {
+    if (isNotificationBlockedByBrowser(notificationEnvironment)) {
+      setNotificationRequestState("blocked");
+      return;
+    }
+
     if (!("Notification" in window)) {
       setPermission("denied");
       setNotificationRequestState("unsupported");
@@ -212,9 +280,7 @@ export default function App() {
 
       if (nextPermission === "granted") {
         setNotificationRequestState("granted");
-        new Notification("企业微信待办通知已开启", {
-          body: "到期事项会在网页打开时提醒。",
-        });
+        sendBrowserNotification("企业微信待办通知已开启", "到期事项会在网页打开时提醒。");
         return;
       }
 
@@ -223,6 +289,40 @@ export default function App() {
       setPermission(getNotificationPermission());
       setNotificationRequestState("error");
     }
+  }
+
+  function sendTestNotification() {
+    if (getNotificationPermission() !== "granted" || !("Notification" in window)) {
+      setTestNotificationMessage("通知权限还没有开启，请先点击开启通知。");
+      return;
+    }
+
+    sendBrowserNotification(
+      "企业微信待办测试通知",
+      "如果你看到了这条系统通知，说明浏览器通知已经可以正常弹出。",
+    );
+    setTestNotificationMessage("已再次发送测试通知。若没有弹窗，请查看 Windows 通知中心或系统通知设置。");
+  }
+
+  async function copyNotificationSettingsUrl() {
+    setSettingsCopyState("idle");
+
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(notificationSettingsUrl);
+        setSettingsCopyState("copied");
+        return;
+      } catch {
+        // Fall back to the older copy command below.
+      }
+    }
+
+    if (copyTextWithSelection(notificationSettingsUrl)) {
+      setSettingsCopyState("copied");
+      return;
+    }
+
+    setSettingsCopyState("error");
   }
 
   function downloadBackup() {
@@ -392,9 +492,30 @@ export default function App() {
           <p className="notice" aria-live="polite">
             {notificationNotice}
           </p>
-          {notificationRequestState === "denied" ? (
-            <button className="link-button" type="button" onClick={() => setShowNotificationHelp(true)}>
-              查看开启方法
+          {permission === "granted" || notificationRequestState === "granted" ? (
+            <div className="notification-status-panel">
+              <p>通知效果：到期待办会弹出系统通知；如果没有看到气泡，请打开 Windows 通知中心查看。</p>
+              <button className="secondary-button compact-button" type="button" onClick={sendTestNotification}>
+                <Bell size={16} />
+                发送测试通知
+              </button>
+              {testNotificationMessage ? (
+                <p className="settings-copy-feedback" aria-live="polite">
+                  {testNotificationMessage}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          {shouldShowNotificationHelp ? (
+            <button
+              className="link-button"
+              type="button"
+              onClick={() => {
+                setSettingsCopyState("idle");
+                setShowNotificationHelp(true);
+              }}
+            >
+              {isNotificationBlockedByBrowser(notificationEnvironment) ? "查看原因和修复方法" : "查看开启方法"}
             </button>
           ) : null}
           {importMessage ? <p className="import-message">{importMessage}</p> : null}
@@ -487,15 +608,33 @@ export default function App() {
               </button>
             </div>
             <p className="dialog-intro">浏览器已拒绝当前站点通知。请将本站通知权限改为允许后重试。</p>
+            <div className="diagnostic-box">
+              <h3>当前检测结果</h3>
+              <p>当前地址：{notificationEnvironment.origin}</p>
+              <p>安全上下文：{notificationEnvironment.isSecureContext ? "是" : "否"}</p>
+              <p>浏览器通知接口：{notificationEnvironment.notificationSupported ? "支持" : "不支持"}</p>
+              <p>权限状态：{notificationEnvironment.permission}</p>
+            </div>
+            <p className="origin-warning">
+              如果当前地址是 192.168.x.x 这类局域网地址，Chrome 可能会把通知权限锁成屏蔽。请改用终端里显示的 Local 地址，例如 http://localhost:5173/。
+            </p>
             <ol className="help-steps">
-              <li>点击地址栏左侧的站点信息图标。</li>
-              <li>找到通知权限，并改为允许。</li>
-              <li>回到本页后，再次点击开启通知。</li>
+              <li>先确认浏览器地址栏是 localhost 地址，例如 http://localhost:5173/。</li>
+              <li>点击地址栏左侧的站点信息图标；如果看到了重置权限，先点击重置权限并刷新页面。</li>
+              <li>回到本页后，再次点击开启通知，并在弹窗中选择允许。</li>
+              <li>如果已经是 localhost 但通知仍是灰色，检查浏览器的全局通知开关，以及 Windows 设置里的系统通知开关。</li>
             </ol>
-            <a className="secondary-button settings-link" href={notificationSettingsUrl} target="_blank" rel="noreferrer">
-              打开浏览器通知设置
-            </a>
-            <p className="settings-url">{notificationSettingsUrl}</p>
+            <p className="settings-hint">浏览器不允许网页直接打开这类内部设置页，请复制下面地址到地址栏打开。</p>
+            <button className="secondary-button settings-link" type="button" onClick={() => void copyNotificationSettingsUrl()}>
+              <Copy size={16} />
+              复制设置地址
+            </button>
+            <p className="settings-copy-feedback" aria-live="polite">
+              {settingsCopyState === "copied" ? "已复制设置地址，请粘贴到浏览器地址栏打开。" : null}
+              {settingsCopyState === "error" ? "复制失败，请手动选中下面地址后复制。" : null}
+            </p>
+            <p className="settings-url-label">设置页地址（不是网页链接，请复制后粘贴到地址栏）：</p>
+            <code className="settings-url">{notificationSettingsUrl}</code>
           </section>
         </div>
       ) : null}
@@ -677,20 +816,41 @@ function getNotificationButtonLabel(state: NotificationRequestState, permission:
   if (state === "requesting") return "请求中...";
   if (permission === "granted" || state === "granted") return "通知已开启";
   if (state === "denied") return "通知已拒绝";
+  if (state === "blocked") return "通知不可用";
   return "开启通知";
 }
 
-function getNotificationNotice(state: NotificationRequestState, permission: NotificationPermission): string {
+function getNotificationNotice(
+  state: NotificationRequestState,
+  permission: NotificationPermission,
+  environment: NotificationEnvironment,
+): string {
   if (state === "requesting") return "正在请求浏览器通知权限，请在弹窗中选择允许。";
   if (state === "granted") return "通知已开启，并已发送测试通知。网页打开时会提醒到期事项。";
   if (state === "denied") return "通知权限已被浏览器拒绝，请在浏览器地址栏或设置中允许通知后重试。";
   if (state === "default") return "未完成授权。关闭权限弹窗后不会发送系统通知，可再次点击开启。";
+  if (state === "blocked" || isNotificationBlockedByBrowser(environment)) {
+    return "当前地址不是浏览器认可的安全地址，通知权限会被锁成屏蔽。请改用 http://localhost:5173/ 或 HTTPS 后再开启。";
+  }
   if (state === "unsupported") return "当前浏览器不支持系统通知，网站仍会在页面内标出到期和逾期任务。";
   if (state === "error") return "通知权限请求失败，网站仍会在页面内标出到期和逾期任务。";
 
   return permission === "granted"
     ? "网页打开时会触发到期通知；关闭期间错过的任务会在下次打开后显示为逾期。"
     : "通知未开启时，网站仍会在页面内标出到期和逾期任务。";
+}
+
+function getNotificationEnvironment(permission: NotificationPermission): NotificationEnvironment {
+  return {
+    origin: window.location.origin,
+    isSecureContext: window.isSecureContext === true,
+    notificationSupported: "Notification" in window,
+    permission,
+  };
+}
+
+function isNotificationBlockedByBrowser(environment: NotificationEnvironment): boolean {
+  return environment.notificationSupported && !environment.isSecureContext;
 }
 
 function getNotificationSettingsUrl(origin: string, userAgent: string): string {
@@ -705,6 +865,30 @@ function getNotificationSettingsUrl(origin: string, userAgent: string): string {
   }
 
   return `chrome://settings/content/siteDetails?site=${encodedOrigin}`;
+}
+
+function copyTextWithSelection(text: string): boolean {
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.setAttribute("readonly", "");
+  textArea.style.position = "fixed";
+  textArea.style.left = "-9999px";
+  textArea.style.top = "0";
+
+  document.body.appendChild(textArea);
+  textArea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textArea);
+  }
+}
+
+function sendBrowserNotification(title: string, body: string): void {
+  new Notification(title, { body });
 }
 
 function toDateTimeLocal(date: Date): string {
