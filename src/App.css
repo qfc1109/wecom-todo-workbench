@@ -93,7 +93,7 @@ h3 {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 425px) minmax(0, 1fr);
   grid-template-areas:
     "entry controls"
     "entry board";
@@ -115,12 +115,14 @@ h3 {
   align-self: start;
   position: sticky;
   top: 82px;
-  padding: 16px;
+  padding: 14px;
 }
 
 .control-panel {
   grid-area: controls;
-  padding: 14px;
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
 }
 
 .task-board {
@@ -128,6 +130,7 @@ h3 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+  align-self: start;
 }
 
 .section-heading,
@@ -148,7 +151,7 @@ h3 {
 .filters,
 .edit-grid {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .form-row {
@@ -159,7 +162,7 @@ h3 {
 
 label {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
   color: #46525e;
   font-size: 13px;
@@ -176,7 +179,7 @@ input,
 select,
 textarea {
   width: 100%;
-  min-height: 38px;
+  min-height: 34px;
   border: 1px solid #cbd5df;
   border-radius: 6px;
   background: #ffffff;
@@ -186,7 +189,7 @@ textarea {
 }
 
 textarea {
-  min-height: 74px;
+  min-height: 58px;
   resize: vertical;
 }
 
@@ -204,7 +207,7 @@ textarea:focus {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-height: 38px;
+  min-height: 36px;
   border: 1px solid transparent;
   border-radius: 6px;
   padding: 8px 12px;
@@ -241,20 +244,24 @@ textarea:focus {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
-  margin-bottom: 12px;
+  margin-bottom: 0;
 }
 
 .stat {
-  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 50px;
   border-radius: 8px;
-  padding: 10px;
+  padding: 9px 11px;
   border: 1px solid;
   background: #ffffff;
 }
 
 .stat span {
   display: block;
-  margin-bottom: 6px;
+  margin-bottom: 0;
   font-size: 12px;
   color: #53606d;
 }
@@ -280,7 +287,7 @@ textarea:focus {
 }
 
 .filters {
-  grid-template-columns: minmax(220px, 1fr) 150px 150px;
+  grid-template-columns: minmax(220px, 1fr) 136px 136px;
   align-items: end;
 }
 
@@ -302,10 +309,28 @@ textarea:focus {
 
 .notice,
 .import-message {
-  margin: 10px 0 0;
+  margin: 0;
   color: #5c6670;
   font-size: 13px;
   line-height: 1.5;
+}
+
+.notice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.notice-row .notice {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.notice-row .link-button {
+  flex: 0 0 auto;
+  padding: 0;
+  white-space: nowrap;
 }
 
 .notification-status-panel {
@@ -355,13 +380,18 @@ textarea:focus {
   background: rgba(15, 23, 42, 0.4);
 }
 
-.help-dialog {
+.help-dialog,
+.task-edit-dialog {
   width: min(520px, 100%);
   border: 1px solid #d6dee8;
   border-radius: 8px;
   background: #ffffff;
   padding: 18px;
   box-shadow: 0 20px 55px rgba(15, 23, 42, 0.22);
+}
+
+.task-edit-dialog {
+  width: min(640px, 100%);
 }
 
 .dialog-heading {
@@ -446,6 +476,23 @@ textarea:focus {
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.task-edit-form {
+  display: grid;
+  gap: 14px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.dialog-actions .secondary-button {
+  flex: 0 0 auto;
+  min-width: 64px;
+  white-space: nowrap;
 }
 
 .task-group {
@@ -566,10 +613,15 @@ textarea:focus {
   gap: 4px;
 }
 
-.task-meta select {
-  width: 118px;
-  min-height: 32px;
-  padding: 5px 8px;
+.status-badge {
+  flex: 0 0 auto;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4e89;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .meta-danger {
@@ -602,17 +654,16 @@ textarea:focus {
   border: 0;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1160px) {
   .workspace {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
     grid-template-areas:
-      "entry"
-      "controls"
-      "board";
+      "entry controls"
+      "entry board";
   }
 
-  .quick-entry {
-    position: static;
+  .filters {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -624,6 +675,11 @@ textarea:focus {
   }
 
   .workspace {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "entry"
+      "controls"
+      "board";
     padding: 12px;
   }
 
@@ -673,7 +729,7 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 
-  .task-meta select {
+  .status-badge {
     width: 100%;
   }
 }

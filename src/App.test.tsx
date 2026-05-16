@@ -92,7 +92,7 @@ describe("App", () => {
     expect(within(today).getByText("企业微信/客户群")).toBeInTheDocument();
   });
 
-  it("filters tasks by search text and can complete then restore a task", async () => {
+  it("filters tasks by search text and changes completion state through the edit dialog", async () => {
     render(<App />);
 
     fireEvent.change(screen.getByLabelText("待办标题"), { target: { value: "确认发票信息" } });
@@ -101,14 +101,46 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "新增待办" }));
 
     fireEvent.change(screen.getByLabelText("搜索待办"), { target: { value: "发票" } });
-    expect(screen.getByText("确认发票信息")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "今天" })).getByText("确认发票信息")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "完成 确认发票信息" }));
+    expect(screen.queryByRole("button", { name: "完成 确认发票信息" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "编辑 确认发票信息" }));
+    const completeDialog = screen.getByRole("dialog", { name: "编辑待办" });
+    fireEvent.change(within(completeDialog).getByLabelText("状态"), { target: { value: "已完成" } });
+    fireEvent.click(within(completeDialog).getByRole("button", { name: "保存修改" }));
+
     const completed = screen.getByRole("region", { name: "已完成" });
     expect(within(completed).getByText("确认发票信息")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "恢复 确认发票信息" }));
+    expect(screen.queryByRole("button", { name: "恢复 确认发票信息" })).not.toBeInTheDocument();
+    fireEvent.click(within(completed).getByRole("button", { name: "编辑 确认发票信息" }));
+    const restoreDialog = screen.getByRole("dialog", { name: "编辑待办" });
+    fireEvent.change(within(restoreDialog).getByLabelText("状态"), { target: { value: "进行中" } });
+    fireEvent.click(within(restoreDialog).getByRole("button", { name: "保存修改" }));
+
     expect(within(screen.getByRole("region", { name: "今天" })).getByText("确认发票信息")).toBeInTheDocument();
+  });
+
+  it("keeps task handling on cards without an unused detail panel", async () => {
+    render(<App />);
+
+    expect(screen.queryByRole("region", { name: "当前待办详情" })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("待办标题"), { target: { value: "跟进采购合同" } });
+    fireEvent.change(screen.getByLabelText("来源人/群"), { target: { value: "企业微信/采购群" } });
+    fireEvent.change(screen.getByLabelText("截止时间"), { target: { value: "2026-05-15T16:30" } });
+    fireEvent.change(screen.getByLabelText("备注"), { target: { value: "确认盖章版本并同步法务。" } });
+    fireEvent.click(screen.getByRole("button", { name: "新增待办" }));
+
+    expect(screen.queryByRole("button", { name: "查看 跟进采购合同" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "完成 跟进采购合同" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "编辑 跟进采购合同" }));
+    const dialog = screen.getByRole("dialog", { name: "编辑待办" });
+    fireEvent.change(within(dialog).getByLabelText("状态"), { target: { value: "已完成" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存修改" }));
+
+    expect(within(screen.getByRole("region", { name: "已完成" })).getByText("跟进采购合同")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "恢复 跟进采购合同" })).not.toBeInTheDocument();
   });
 
   it("edits an existing task and saves the updated details", async () => {
@@ -120,13 +152,16 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "新增待办" }));
 
     fireEvent.click(screen.getByRole("button", { name: "编辑 整理会议纪要" }));
-    fireEvent.change(screen.getByLabelText("标题"), { target: { value: "整理客户会议纪要" } });
-    fireEvent.change(screen.getByLabelText("来源"), { target: { value: "客户群" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    const dialog = screen.getByRole("dialog", { name: "编辑待办" });
+    fireEvent.change(within(dialog).getByLabelText("标题"), { target: { value: "整理客户会议纪要" } });
+    fireEvent.change(within(dialog).getByLabelText("来源"), { target: { value: "客户群" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存修改" }));
 
-    expect(screen.getByText("整理客户会议纪要")).toBeInTheDocument();
-    expect(screen.getByText("客户群")).toBeInTheDocument();
+    const today = screen.getByRole("region", { name: "今天" });
+    expect(within(today).getByText("整理客户会议纪要")).toBeInTheDocument();
+    expect(within(today).getByText("客户群")).toBeInTheDocument();
     expect(screen.queryByText("整理会议纪要")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "编辑待办" })).not.toBeInTheDocument();
   });
 
   it("imports a backup file and replaces the current task list", async () => {
@@ -147,7 +182,7 @@ describe("App", () => {
       value: () => Promise.resolve(exportTasks([importedTask])),
     });
 
-    expect(screen.getByText("导入前的待办")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "今日优先待办" })).getByText("导入前的待办")).toBeInTheDocument();
 
     fireEvent.change(input as HTMLInputElement, {
       target: {
@@ -156,7 +191,7 @@ describe("App", () => {
     });
 
     expect(await screen.findByText("已导入 1 条待办")).toBeInTheDocument();
-    expect(screen.getByText("导入后的待办")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "今日优先待办" })).getByText("导入后的待办")).toBeInTheDocument();
     expect(screen.queryByText("导入前的待办")).not.toBeInTheDocument();
   });
 
@@ -249,8 +284,9 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "新增待办" }));
 
     fireEvent.click(screen.getByRole("button", { name: "编辑 改期提醒客户" }));
-    fireEvent.change(screen.getAllByLabelText("截止时间")[1], { target: { value: "2026-05-15T09:01" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    const dialog = screen.getByRole("dialog", { name: "编辑待办" });
+    fireEvent.change(within(dialog).getByLabelText("截止时间"), { target: { value: "2026-05-15T09:01" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "保存修改" }));
 
     await act(async () => {
       vi.advanceTimersByTime(43_000);
@@ -271,6 +307,9 @@ describe("App", () => {
 
     expect(await screen.findByRole("button", { name: "通知已拒绝" })).toBeInTheDocument();
     expect(screen.getByText("通知权限已被浏览器拒绝，请在浏览器地址栏或设置中允许通知后重试。")).toBeInTheDocument();
+    const notificationStatus = screen.getByRole("group", { name: "通知状态" });
+    expect(within(notificationStatus).getByText("通知权限已被浏览器拒绝，请在浏览器地址栏或设置中允许通知后重试。")).toBeInTheDocument();
+    expect(within(notificationStatus).getByRole("button", { name: "查看开启方法" })).toBeInTheDocument();
   });
 
   it("diagnoses blocked notification permissions before requesting browser permission", async () => {

@@ -1,13 +1,11 @@
 import {
   AlertTriangle,
   Bell,
-  Check,
   Copy,
   Download,
   Edit3,
   Filter,
   Plus,
-  RotateCcw,
   Save,
   Search,
   Trash2,
@@ -23,7 +21,6 @@ import {
   groupTasksByDueDate,
   isTaskOverdue,
   updateTask,
-  updateTaskStatus,
   type Task,
   type TaskPriority,
   type TaskStatus,
@@ -191,6 +188,7 @@ export default function App() {
   const notificationNotice = getNotificationNotice(notificationRequestState, permission, notificationEnvironment);
   const notificationButtonLabel = getNotificationButtonLabel(notificationRequestState, permission);
   const notificationSettingsUrl = getNotificationSettingsUrl(window.location.origin, navigator.userAgent);
+  const editingTask = editingId ? tasks.find((task) => task.id === editingId) ?? null : null;
   const shouldShowNotificationHelp =
     notificationRequestState === "denied" ||
     notificationRequestState === "blocked" ||
@@ -230,12 +228,12 @@ export default function App() {
     setEditDraft(null);
   }
 
-  function saveEdit(task: Task) {
-    if (!editDraft || !editDraft.title.trim() || !editDraft.dueAt) return;
+  function saveEdit() {
+    if (!editingId || !editDraft || !editDraft.title.trim() || !editDraft.dueAt) return;
 
     setTasks((currentTasks) =>
       currentTasks.map((item) =>
-        item.id === task.id
+        item.id === editingId
           ? updateTask(item, {
               title: editDraft.title,
               source: editDraft.source || "未填写来源",
@@ -252,12 +250,11 @@ export default function App() {
     cancelEditing();
   }
 
-  function setStatus(task: Task, status: TaskStatus) {
-    setTasks((currentTasks) => currentTasks.map((item) => (item.id === task.id ? updateTaskStatus(item, status) : item)));
-  }
-
   function removeTask(task: Task) {
     setTasks((currentTasks) => currentTasks.filter((item) => item.id !== task.id));
+    if (task.id === editingId) {
+      cancelEditing();
+    }
   }
 
   async function requestPermission() {
@@ -489,9 +486,23 @@ export default function App() {
             </label>
           </div>
 
-          <p className="notice" aria-live="polite">
-            {notificationNotice}
-          </p>
+          <div className="notice-row" role="group" aria-label="通知状态">
+            <p className="notice" aria-live="polite">
+              {notificationNotice}
+            </p>
+            {shouldShowNotificationHelp ? (
+              <button
+                className="link-button"
+                type="button"
+                onClick={() => {
+                  setSettingsCopyState("idle");
+                  setShowNotificationHelp(true);
+                }}
+              >
+                {isNotificationBlockedByBrowser(notificationEnvironment) ? "查看原因和修复方法" : "查看开启方法"}
+              </button>
+            ) : null}
+          </div>
           {permission === "granted" || notificationRequestState === "granted" ? (
             <div className="notification-status-panel">
               <p>通知效果：到期待办会弹出系统通知；如果没有看到气泡，请打开 Windows 通知中心查看。</p>
@@ -506,18 +517,6 @@ export default function App() {
               ) : null}
             </div>
           ) : null}
-          {shouldShowNotificationHelp ? (
-            <button
-              className="link-button"
-              type="button"
-              onClick={() => {
-                setSettingsCopyState("idle");
-                setShowNotificationHelp(true);
-              }}
-            >
-              {isNotificationBlockedByBrowser(notificationEnvironment) ? "查看原因和修复方法" : "查看开启方法"}
-            </button>
-          ) : null}
           {importMessage ? <p className="import-message">{importMessage}</p> : null}
         </section>
 
@@ -528,13 +527,7 @@ export default function App() {
             tasks={groups.overdue}
             emptyText="没有逾期待办。"
             clock={clock}
-            editingId={editingId}
-            editDraft={editDraft}
-            onEditDraftChange={setEditDraft}
             onStartEdit={startEditing}
-            onCancelEdit={cancelEditing}
-            onSaveEdit={saveEdit}
-            onStatusChange={setStatus}
             onRemove={removeTask}
           />
           <TaskGroup
@@ -543,13 +536,7 @@ export default function App() {
             tasks={groups.today}
             emptyText="今天没有待办。"
             clock={clock}
-            editingId={editingId}
-            editDraft={editDraft}
-            onEditDraftChange={setEditDraft}
             onStartEdit={startEditing}
-            onCancelEdit={cancelEditing}
-            onSaveEdit={saveEdit}
-            onStatusChange={setStatus}
             onRemove={removeTask}
           />
           <TaskGroup
@@ -558,13 +545,7 @@ export default function App() {
             tasks={groups.future}
             emptyText="未来没有排期。"
             clock={clock}
-            editingId={editingId}
-            editDraft={editDraft}
-            onEditDraftChange={setEditDraft}
             onStartEdit={startEditing}
-            onCancelEdit={cancelEditing}
-            onSaveEdit={saveEdit}
-            onStatusChange={setStatus}
             onRemove={removeTask}
           />
           <TaskGroup
@@ -573,13 +554,7 @@ export default function App() {
             tasks={groups.completed}
             emptyText="暂时没有完成记录。"
             clock={clock}
-            editingId={editingId}
-            editDraft={editDraft}
-            onEditDraftChange={setEditDraft}
             onStartEdit={startEditing}
-            onCancelEdit={cancelEditing}
-            onSaveEdit={saveEdit}
-            onStatusChange={setStatus}
             onRemove={removeTask}
           />
         </section>
@@ -638,6 +613,103 @@ export default function App() {
           </section>
         </div>
       ) : null}
+      {editingTask && editDraft ? (
+        <div className="modal-backdrop">
+          <section
+            className="task-edit-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="task-edit-title"
+          >
+            <div className="dialog-heading">
+              <div>
+                <p className="eyebrow">修改待办事项</p>
+                <h2 id="task-edit-title">编辑待办</h2>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label={`取消编辑 ${editingTask.title}`}
+                onClick={cancelEditing}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <form
+              className="task-edit-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                saveEdit();
+              }}
+            >
+              <div className="edit-grid">
+                <label>
+                  <span>标题</span>
+                  <input
+                    value={editDraft.title}
+                    onChange={(event) => setEditDraft({ ...editDraft, title: event.target.value })}
+                    required
+                  />
+                </label>
+                <label>
+                  <span>来源</span>
+                  <input
+                    value={editDraft.source}
+                    onChange={(event) => setEditDraft({ ...editDraft, source: event.target.value })}
+                  />
+                </label>
+                <label>
+                  <span>截止时间</span>
+                  <input
+                    type="datetime-local"
+                    value={editDraft.dueAt}
+                    onChange={(event) => setEditDraft({ ...editDraft, dueAt: event.target.value })}
+                    required
+                  />
+                </label>
+                <label>
+                  <span>状态</span>
+                  <select
+                    value={editDraft.status}
+                    onChange={(event) => setEditDraft({ ...editDraft, status: event.target.value as TaskStatus })}
+                  >
+                    {TASK_STATUSES.map((status) => (
+                      <option key={status}>{status}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>优先级</span>
+                  <select
+                    value={editDraft.priority}
+                    onChange={(event) => setEditDraft({ ...editDraft, priority: event.target.value as TaskPriority })}
+                  >
+                    {TASK_PRIORITIES.map((priority) => (
+                      <option key={priority}>{priority}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="wide">
+                  <span>备注</span>
+                  <textarea
+                    value={editDraft.notes}
+                    onChange={(event) => setEditDraft({ ...editDraft, notes: event.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="dialog-actions">
+                <button className="secondary-button" type="button" onClick={cancelEditing}>
+                  取消
+                </button>
+                <button className="primary-button" type="submit">
+                  <Save size={16} />
+                  保存修改
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -648,13 +720,7 @@ interface TaskGroupProps {
   tasks: Task[];
   emptyText: string;
   clock: Date;
-  editingId: string | null;
-  editDraft: TaskDraft | null;
-  onEditDraftChange: (draft: TaskDraft | null) => void;
   onStartEdit: (task: Task) => void;
-  onCancelEdit: () => void;
-  onSaveEdit: (task: Task) => void;
-  onStatusChange: (task: Task, status: TaskStatus) => void;
   onRemove: (task: Task) => void;
 }
 
@@ -678,86 +744,10 @@ function TaskGroup(props: TaskGroupProps) {
 function TaskCard({
   task,
   clock,
-  editingId,
-  editDraft,
-  onEditDraftChange,
   onStartEdit,
-  onCancelEdit,
-  onSaveEdit,
-  onStatusChange,
   onRemove,
 }: Omit<TaskGroupProps, "title" | "tone" | "tasks" | "emptyText"> & { task: Task }) {
-  const editing = editingId === task.id && editDraft;
   const overdue = isTaskOverdue(task, clock);
-
-  if (editing) {
-    return (
-      <article className="task-card editing">
-        <div className="edit-grid">
-          <label>
-            <span>标题</span>
-            <input
-              value={editDraft.title}
-              onChange={(event) => onEditDraftChange({ ...editDraft, title: event.target.value })}
-            />
-          </label>
-          <label>
-            <span>来源</span>
-            <input
-              value={editDraft.source}
-              onChange={(event) => onEditDraftChange({ ...editDraft, source: event.target.value })}
-            />
-          </label>
-          <label>
-            <span>截止时间</span>
-            <input
-              type="datetime-local"
-              value={editDraft.dueAt}
-              onChange={(event) => onEditDraftChange({ ...editDraft, dueAt: event.target.value })}
-            />
-          </label>
-          <label>
-            <span>状态</span>
-            <select
-              value={editDraft.status}
-              onChange={(event) => onEditDraftChange({ ...editDraft, status: event.target.value as TaskStatus })}
-            >
-              {TASK_STATUSES.map((status) => (
-                <option key={status}>{status}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>优先级</span>
-            <select
-              value={editDraft.priority}
-              onChange={(event) => onEditDraftChange({ ...editDraft, priority: event.target.value as TaskPriority })}
-            >
-              {TASK_PRIORITIES.map((priority) => (
-                <option key={priority}>{priority}</option>
-              ))}
-            </select>
-          </label>
-          <label className="wide">
-            <span>备注</span>
-            <textarea
-              value={editDraft.notes}
-              onChange={(event) => onEditDraftChange({ ...editDraft, notes: event.target.value })}
-            />
-          </label>
-        </div>
-        <div className="card-actions">
-          <button className="secondary-button" type="button" onClick={() => onSaveEdit(task)}>
-            <Save size={16} />
-            保存
-          </button>
-          <button className="icon-button" type="button" aria-label={`取消编辑 ${task.title}`} onClick={onCancelEdit}>
-            <X size={16} />
-          </button>
-        </div>
-      </article>
-    );
-  }
 
   return (
     <article className={`task-card ${overdue ? "is-overdue" : ""}`}>
@@ -773,25 +763,10 @@ function TaskCard({
           {overdue ? <AlertTriangle size={14} /> : null}
           {formatDueLabel(task)}
         </span>
-        <select value={task.status} onChange={(event) => onStatusChange(task, event.target.value as TaskStatus)}>
-          {TASK_STATUSES.map((status) => (
-            <option key={status}>{status}</option>
-          ))}
-        </select>
+        <span className="status-badge">{task.status}</span>
       </div>
       {task.notes ? <p className="task-notes">{task.notes}</p> : null}
       <div className="card-actions">
-        {task.status === "已完成" ? (
-          <button className="secondary-button" type="button" aria-label={`恢复 ${task.title}`} onClick={() => onStatusChange(task, "进行中")}>
-            <RotateCcw size={16} />
-            恢复
-          </button>
-        ) : (
-          <button className="secondary-button" type="button" aria-label={`完成 ${task.title}`} onClick={() => onStatusChange(task, "已完成")}>
-            <Check size={16} />
-            完成
-          </button>
-        )}
         <button className="icon-button" type="button" aria-label={`编辑 ${task.title}`} onClick={() => onStartEdit(task)}>
           <Edit3 size={16} />
         </button>
