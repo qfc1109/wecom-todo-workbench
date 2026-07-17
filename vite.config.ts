@@ -8,4 +8,8 @@ export default defineConfig({
     globals: true,
     setupFiles: "./src/test/setup.ts",
   },
+ server: {
+    host: '0.0.0.0',
+    allowedHosts: ['.ngrok-free.dev']
+  }
 });

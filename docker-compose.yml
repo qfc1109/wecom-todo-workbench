@@ -1,0 +1,10 @@
+services:
+  wecom-todo-workbench:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wecom-todo-workbench:local
+    container_name: wecom-todo-workbench
+    restart: unless-stopped
+    ports:
+      - "5173:80"
